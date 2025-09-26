@@ -1,0 +1,34 @@
+---
+# Deploy the packaged Flask app
+- name: Ensure /opt/flask_app exists
+  file:
+    path: /opt/flask_app
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Upload artifact
+  unarchive:
+    src: /tmp/deploy/flask_app-{{ app_version }}.tar.gz
+    dest: /opt/flask_app
+    remote_src: yes
+
+- name: Install requirements in venv
+  pip:
+    requirements: /opt/flask_app/requirements.txt
+    virtualenv: /opt/flask_app/.venv
+
+- name: Create systemd service file for flask app
+  template:
+    src: flask_app.service.j2
+    dest: /etc/systemd/system/flask_app.service
+    mode: '0644'
+  notify: Restart flask service
+
+- name: Create env file
+  template:
+    src: flask_env.j2
+    dest: /opt/flask_app/.env
+    mode: '0644'
+

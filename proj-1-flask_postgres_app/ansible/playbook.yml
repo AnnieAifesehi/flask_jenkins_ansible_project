@@ -1,0 +1,13 @@
+- hosts: db_server
+  become: true
+  roles:
+    - role: postgresql
+
+- hosts: app_servers
+  become: true
+  vars:
+    app_version: "{{ app_version | default('1.0.0') }}"
+    db_host: "{{ db_host | default('127.0.0.1') }}"
+  roles:
+    - role: python_flask
+    - role: deploy_app

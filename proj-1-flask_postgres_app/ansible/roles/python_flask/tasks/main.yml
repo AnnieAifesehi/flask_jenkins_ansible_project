@@ -1,0 +1,23 @@
+---
+# tasks file for python_flask
+- name: Install python3 and pip (centos/ubuntu)
+  package:
+    name:
+      - python3
+      - python3-venv
+      - python3-pip
+    state: present
+  become: true
+
+- name: Create app directory
+  file:
+    path: /opt/flask_app
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create virtualenv
+  command: python3 -m venv /opt/flask_app/.venv
+  args:
+    creates: /opt/flask_app/.venv

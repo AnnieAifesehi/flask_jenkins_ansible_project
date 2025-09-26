@@ -1,0 +1,6 @@
+---
+- name: Restart flask service
+  service:
+    name: flask_app
+    state: restarted
+    enabled: yes
