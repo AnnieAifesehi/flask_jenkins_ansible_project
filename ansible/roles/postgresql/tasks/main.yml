@@ -1,4 +1,5 @@
 ---
+---
 # Install and configure PostgreSQL (CentOS)
 - name: Install PostgreSQL server
   package:
@@ -19,7 +20,7 @@
     enabled: true
   become: true
 
-- name: Create DB and user
+- name: Create DB
   become_user: postgres
   postgresql_db:
     name: devopsdb
@@ -32,17 +33,17 @@
     password: password
     priv: "devopsdb:ALL"
 
-- name: Populate users table
+- name: Populate users table - ensure DB encoding
   become_user: postgres
   postgresql_db:
     name: devopsdb
     state: present
     encoding: UTF-8
 
-  # For simple population we copy and run SQL file if present
+# For simple population we copy and run SQL file if present
 - name: Copy DB init SQL
   copy:
-    src: ../../../../proj-1-flask_postgres_app/db/init.sql
+    src: ../../../../db/init.sql
     dest: /tmp/init.sql
     owner: root
     mode: '0644'
@@ -50,7 +51,4 @@
 
 - name: Run DB init SQL
   become_user: postgres
-  postgresql_db:
-    name: devopsdb
-    state: present
   shell: psql -d devopsdb -f /tmp/init.sql
