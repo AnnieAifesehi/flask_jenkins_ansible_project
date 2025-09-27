@@ -1,4 +1,11 @@
+
 # PostgreSQL role tasks (distro-aware)
+
+# Always check if PostgreSQL is already installed
+- name: Check if PostgreSQL is already installed
+  stat:
+    path: /usr/bin/postgres
+  register: postgres_bin
 
 - name: Try install default postgresql package
   package:
@@ -7,6 +14,7 @@
   register: pg_default_install
   ignore_errors: true
   become: true
+  when: not postgres_bin.stat.exists
 
 - name: If default package installed, ensure service is started (generic)
   service:
@@ -16,6 +24,7 @@
   when: pg_default_install is succeeded
   become: true
 
+
 - name: AL2023 - install OpenLDAP compatibility packages
   package:
     name:
@@ -23,7 +32,8 @@
       - openldap-compat
     state: present
   become: true
-  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and not postgres_bin.stat.exists
+
 
 - name: AL2023 - add PGDG repo file (EL9 path)
   copy:
@@ -38,19 +48,22 @@
     owner: root
     mode: '0644'
   become: true
-  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and not postgres_bin.stat.exists
+
 
 - name: AL2023 - refresh package cache
   command: dnf -y makecache
   become: true
-  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and not postgres_bin.stat.exists
+
 
 - name: AL2023 - install postgresql15-server package
   package:
     name: postgresql15-server
     state: present
   become: true
-  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and not postgres_bin.stat.exists
+
 
 - name: AL2023 - initialize PostgreSQL using vendor helper (if present)
   command: /usr/pgsql-15/bin/postgresql-15-setup initdb
@@ -58,14 +71,15 @@
     creates: /var/lib/pgsql/15/data/PG_VERSION
   become: true
   ignore_errors: true
-  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and not postgres_bin.stat.exists
+
 
 - name: AL2023 - fallback initialize using initdb
   command: /usr/bin/initdb -D /var/lib/pgsql/data
   args:
     creates: /var/lib/pgsql/data/PG_VERSION
   become: true
-  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and not postgres_bin.stat.exists
 
 - name: AL2023 - ensure PostgreSQL service is enabled and started
   service:
