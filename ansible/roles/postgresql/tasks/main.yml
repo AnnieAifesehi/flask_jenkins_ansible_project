@@ -78,6 +78,66 @@
   become: true
   when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
 
+# If the PGDG vendor unit (postgresql-15.service) is not present but the legacy
+# distribution unit 'postgresql.service' exists, create a symlink from the
+# legacy data path to the 15 data dir so the existing unit can find the cluster.
+- name: AL2023 - check for postgresql-15 systemd unit
+  stat:
+    path: /usr/lib/systemd/system/postgresql-15.service
+  register: pg15_unit
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+
+- name: AL2023 - check for legacy postgresql systemd unit
+  stat:
+    path: /usr/lib/systemd/system/postgresql.service
+  register: pg_legacy_unit
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+
+- name: AL2023 - create legacy data dir symlink if needed
+  file:
+    src: /var/lib/pgsql/15/data
+    dest: /var/lib/pgsql/data
+    state: link
+    owner: postgres
+    group: postgres
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and (pg15_unit.stat.exists is not defined or not pg15_unit.stat.exists) and pg_legacy_unit.stat.exists
+
+# If the legacy unit exists but the legacy data dir is empty/missing, copy the
+# initialized 15 data into the legacy path so the legacy unit can start.
+- name: AL2023 - stat legacy PG_VERSION
+  stat:
+    path: /var/lib/pgsql/data/PG_VERSION
+  register: legacy_pg_version
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and pg_legacy_unit.stat.exists
+
+- name: AL2023 - stat PG15 PG_VERSION
+  stat:
+    path: /var/lib/pgsql/15/data/PG_VERSION
+  register: pg15_version
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed
+
+- name: AL2023 - copy PG15 data into legacy data dir if legacy missing
+  command: rsync -a /var/lib/pgsql/15/data/ /var/lib/pgsql/data/
+  args:
+    creates: /var/lib/pgsql/data/PG_VERSION
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and (pg15_unit.stat.exists is not defined or not pg15_unit.stat.exists) and pg_legacy_unit.stat.exists and pg15_version.stat.exists and (legacy_pg_version.stat.exists is not defined or not legacy_pg_version.stat.exists)
+
+- name: AL2023 - ensure ownership of legacy data dir after copy
+  file:
+    path: /var/lib/pgsql/data
+    owner: postgres
+    group: postgres
+    recurse: yes
+  become: true
+  when: ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed and pg_legacy_unit.stat.exists
+
+
 - name: Install PostgreSQL packages (RedHat family non-Amazon)
   when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed
   package:
