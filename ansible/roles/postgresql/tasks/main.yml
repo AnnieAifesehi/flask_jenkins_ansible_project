@@ -1,5 +1,3 @@
----
----
 # Install and configure PostgreSQL (CentOS)
 - name: Install PostgreSQL server
   package:
