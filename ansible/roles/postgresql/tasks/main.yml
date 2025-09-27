@@ -191,7 +191,8 @@
   postgresql_user:
     name: devops
     password: password
-    priv: "devopsdb:ALL"
+    db: devopsdb
+    priv: "ALL"
 
 - name: Ensure DB encoding
   become_user: postgres
