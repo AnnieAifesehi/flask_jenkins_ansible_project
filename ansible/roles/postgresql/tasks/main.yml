@@ -4,109 +4,161 @@
   package:
     name: postgresql-server
     state: present
-  register: pg_default_install
-  ignore_errors: true
-  become: true
+  ---
+  # PostgreSQL role tasks (distro-aware)
 
-- name: If default package installed, ensure service is started (generic)
-  service:
-    name: postgresql
-    state: started
-    enabled: true
-  when: pg_default_install is succeeded
-  become: true
-
-- block:
-  - name: Add PGDG repository RPM for EL9 (needed on Amazon Linux 2023)
-    yum:
-      name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-      state: present
-    become: true
-
-  - name: Install PostgreSQL 15 server from PGDG repo
+  - name: Try install default postgresql package
     package:
-      name: postgresql15-server
+      name: postgresql-server
       state: present
-    become: true
+    # PostgreSQL role tasks (distro-aware)
 
-  - name: Initialize PostgreSQL 15 database
-    command: /usr/pgsql-15/bin/postgresql-15-setup initdb
-    args:
-      creates: /var/lib/pgsql/15/data/PG_VERSION
-    become: true
+    - name: Try install default postgresql package
+      package:
+        name: postgresql-server
+        state: present
+      register: pg_default_install
+      ignore_errors: true
+      become: true
 
-  - name: Ensure PostgreSQL 15 service is started and enabled
-    service:
-      name: postgresql-15
-      state: started
-      enabled: true
-    become: true
-  when: pg_default_install is failed
+    - name: If default package installed, ensure service is started (generic)
+      service:
+        name: postgresql
+        state: started
+        enabled: true
+      when: pg_default_install is succeeded
+      become: true
 
-- name: Install PostgreSQL packages (RedHat family non-Amazon)
-  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed
-  package:
-    name:
-      - postgresql-server
-      - postgresql
-      - postgresql-contrib
-    state: present
-  become: true
+    # Amazon Linux 2023 specific steps
+    - name: AL2023 - install OpenLDAP compatibility packages
+      package:
+        name:
+          - openldap
+          - openldap-compat
+        state: present
+      become: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Initialize PostgreSQL database (RedHat family non-Amazon)
-  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed
-  command: /usr/bin/postgresql-setup --initdb
-  args:
-    creates: /var/lib/pgsql/data/PG_VERSION
-  become: true
+    - name: AL2023 - add PGDG repo file (EL9 path)
+      copy:
+        dest: /etc/yum.repos.d/pgdg15.repo
+        content: |
+          [pgdg15]
+          name=PostgreSQL 15 for EL-9 - $basearch
+          baseurl=https://download.postgresql.org/pub/repos/yum/15/redhat/rhel-9-x86_64
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://download.postgresql.org/pub/repos/yum/RPM-GPG-KEY-PGDG
+      owner: root
+      mode: '0644'
+      become: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Install PostgreSQL packages (Debian family)
-  when: ansible_facts['os_family'] == 'Debian'
-  apt:
-    name:
-      - postgresql
-      - postgresql-contrib
-      - libpq-dev
-    state: present
-    update_cache: true
-  become: true
+    - name: AL2023 - refresh package cache
+      command: dnf -y makecache
+      become: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Create DB
-  become_user: postgres
-  postgresql_db:
-    name: devopsdb
-    state: present
+    - name: AL2023 - install postgresql15-server package
+      package:
+        name: postgresql15-server
+        state: present
+      become: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Create devops user
-  become_user: postgres
-  postgresql_user:
-    name: devops
-    password: password
-    priv: "devopsdb:ALL"
+    - name: AL2023 - initialize PostgreSQL using vendor helper (if present)
+      command: /usr/pgsql-15/bin/postgresql-15-setup initdb
+      args:
+        creates: /var/lib/pgsql/15/data/PG_VERSION
+      become: true
+      ignore_errors: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Populate users table - ensure DB encoding
-  become_user: postgres
-  postgresql_db:
-    name: devopsdb
-    state: present
-    encoding: UTF-8
+    - name: AL2023 - fallback initialize using initdb
+      command: /usr/bin/initdb -D /var/lib/pgsql/data
+      args:
+        creates: /var/lib/pgsql/data/PG_VERSION
+      become: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Copy DB init SQL if present
-  copy:
-    src: ../../../../db/init.sql
-    dest: /tmp/init.sql
-    owner: root
-    mode: '0644'
-  become: true
-  ignore_errors: true
+    - name: AL2023 - ensure PostgreSQL service is enabled and started
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - postgresql-15
+        - postgresql
+      become: true
+      when: "ansible_facts['distribution'] == 'Amazon' and pg_default_install is failed"
 
-- name: Stat /tmp/init.sql
-  stat:
-    path: /tmp/init.sql
-  register: init_sql_stat
-  become: true
+    # RedHat (non-Amazon) path
+    - name: Install PostgreSQL packages (RedHat family non-Amazon)
+      when: "ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed"
+      package:
+        name:
+          - postgresql-server
+          - postgresql
+          - postgresql-contrib
+        state: present
+      become: true
 
-- name: Run DB init SQL (if present)
-  become_user: postgres
-  shell: psql -d devopsdb -f /tmp/init.sql
-  when: init_sql_stat.stat.exists | default(false)
+    - name: Initialize PostgreSQL database (RedHat family non-Amazon)
+      when: "ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed"
+      command: /usr/bin/postgresql-setup --initdb
+      args:
+        creates: /var/lib/pgsql/data/PG_VERSION
+      become: true
+
+    # Debian family
+    - name: Install PostgreSQL packages (Debian family)
+      when: "ansible_facts['os_family'] == 'Debian'"
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - libpq-dev
+        state: present
+        update_cache: true
+      become: true
+
+    # Database objects
+    - name: Create DB
+      become_user: postgres
+      postgresql_db:
+        name: devopsdb
+        state: present
+
+    - name: Create devops user
+      become_user: postgres
+      postgresql_user:
+        name: devops
+        password: password
+        priv: "devopsdb:ALL"
+
+    - name: Ensure DB encoding
+      become_user: postgres
+      postgresql_db:
+        name: devopsdb
+        state: present
+        encoding: UTF-8
+
+    - name: Copy DB init SQL if present
+      copy:
+        src: ../../../../db/init.sql
+        dest: /tmp/init.sql
+        owner: root
+        mode: '0644'
+      become: true
+      ignore_errors: true
+
+    - name: Stat /tmp/init.sql
+      stat:
+        path: /tmp/init.sql
+      register: init_sql_stat
+      become: true
+
+    - name: Run DB init SQL (if present)
+      become_user: postgres
+      shell: psql -d devopsdb -f /tmp/init.sql
+      when: init_sql_stat.stat.exists | default(false)
