@@ -1,29 +1,19 @@
----
-# Enable Amazon Linux extras for PostgreSQL (Amazon Linux)
-- name: Enable Amazon Linux extras for PostgreSQL (Amazon Linux)
-  when: ansible_facts['distribution'] == 'Amazon'
-  command: amazon-linux-extras enable postgresql11
-  become: true
-  ignore_errors: true
+# PostgreSQL role tasks (distro-aware)
 
-# Install PostgreSQL on Amazon Linux (via package names for extras)
-- name: Install PostgreSQL on Amazon Linux (via package names for extras)
-  when: ansible_facts['distribution'] == 'Amazon'
-  package:
-    name:
-      - postgresql11
-      - postgresql11-server
-    state: present
-  become: true
-
-# Amazon Linux 2023 - try install default postgresql-server
-- name: Amazon Linux 2023 - try install default postgresql-server
-  when: ansible_facts['distribution'] == 'Amazon'
+- name: Try install default postgresql package
   package:
     name: postgresql-server
     state: present
-  register: amazon_pg_try
+  register: pg_default_install
   ignore_errors: true
+  become: true
+
+- name: If default package installed, ensure service is started (generic)
+  service:
+    name: postgresql
+    state: started
+    enabled: true
+  when: pg_default_install is succeeded
   become: true
 
 - block:
@@ -51,11 +41,10 @@
       state: started
       enabled: true
     become: true
-  when: amazon_pg_try is failed
+  when: pg_default_install is failed
 
-# Install PostgreSQL packages (RedHat family non-Amazon)
 - name: Install PostgreSQL packages (RedHat family non-Amazon)
-  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon'
+  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed
   package:
     name:
       - postgresql-server
@@ -64,15 +53,13 @@
     state: present
   become: true
 
-# Initialize PostgreSQL database (RedHat family)
-- name: Initialize PostgreSQL database (RedHat family)
-  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon'
+- name: Initialize PostgreSQL database (RedHat family non-Amazon)
+  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon' and pg_default_install is failed
   command: /usr/bin/postgresql-setup --initdb
   args:
     creates: /var/lib/pgsql/data/PG_VERSION
   become: true
 
-# Install PostgreSQL packages (Debian family)
 - name: Install PostgreSQL packages (Debian family)
   when: ansible_facts['os_family'] == 'Debian'
   apt:
@@ -84,22 +71,12 @@
     update_cache: true
   become: true
 
-# Ensure PostgreSQL service is started and enabled (generic)
-- name: Ensure PostgreSQL service is started and enabled (generic)
-  service:
-    name: "{{ 'postgresql-15' if (ansible_facts['distribution'] == 'Amazon' and (amazon_pg_try is failed)) else 'postgresql' }}"
-    state: started
-    enabled: true
-  become: true
-
-# Create DB
 - name: Create DB
   become_user: postgres
   postgresql_db:
     name: devopsdb
     state: present
 
-# Create devops user
 - name: Create devops user
   become_user: postgres
   postgresql_user:
@@ -107,7 +84,6 @@
     password: password
     priv: "devopsdb:ALL"
 
-# Populate users table - ensure DB encoding
 - name: Populate users table - ensure DB encoding
   become_user: postgres
   postgresql_db:
@@ -115,7 +91,6 @@
     state: present
     encoding: UTF-8
 
-# Copy DB init SQL if present
 - name: Copy DB init SQL if present
   copy:
     src: ../../../../db/init.sql
