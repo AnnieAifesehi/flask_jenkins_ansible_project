@@ -16,8 +16,45 @@
     state: present
   become: true
 
-# Install PostgreSQL packages (RedHat family)
-- name: Install PostgreSQL packages (RedHat family)
+# Amazon Linux 2023 - try install default postgresql-server
+- name: Amazon Linux 2023 - try install default postgresql-server
+  when: ansible_facts['distribution'] == 'Amazon'
+  package:
+    name: postgresql-server
+    state: present
+  register: amazon_pg_try
+  ignore_errors: true
+  become: true
+
+- block:
+  - name: Add PGDG repository RPM for EL9 (needed on Amazon Linux 2023)
+    yum:
+      name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+      state: present
+    become: true
+
+  - name: Install PostgreSQL 15 server from PGDG repo
+    package:
+      name: postgresql15-server
+      state: present
+    become: true
+
+  - name: Initialize PostgreSQL 15 database
+    command: /usr/pgsql-15/bin/postgresql-15-setup initdb
+    args:
+      creates: /var/lib/pgsql/15/data/PG_VERSION
+    become: true
+
+  - name: Ensure PostgreSQL 15 service is started and enabled
+    service:
+      name: postgresql-15
+      state: started
+      enabled: true
+    become: true
+  when: amazon_pg_try is failed
+
+# Install PostgreSQL packages (RedHat family non-Amazon)
+- name: Install PostgreSQL packages (RedHat family non-Amazon)
   when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon'
   package:
     name:
@@ -27,8 +64,9 @@
     state: present
   become: true
 
+# Initialize PostgreSQL database (RedHat family)
 - name: Initialize PostgreSQL database (RedHat family)
-  when: ansible_facts['os_family'] == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] != 'Amazon'
   command: /usr/bin/postgresql-setup --initdb
   args:
     creates: /var/lib/pgsql/data/PG_VERSION
@@ -46,10 +84,10 @@
     update_cache: true
   become: true
 
-# Ensure PostgreSQL service is started and enabled
-- name: Ensure PostgreSQL service is started and enabled
+# Ensure PostgreSQL service is started and enabled (generic)
+- name: Ensure PostgreSQL service is started and enabled (generic)
   service:
-    name: postgresql
+    name: "{{ 'postgresql-15' if (ansible_facts['distribution'] == 'Amazon' and (amazon_pg_try is failed)) else 'postgresql' }}"
     state: started
     enabled: true
   become: true
